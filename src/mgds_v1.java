@@ -1,8 +1,7 @@
 
 import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
 import javax.swing.JFileChooser;
+import com.fazecast.jSerialComm.*;
 
 /*
  * To change this license header, choose License Headers in Project Properties.
@@ -16,13 +15,21 @@ import javax.swing.JFileChooser;
  */
 public class mgds_v1 extends javax.swing.JFrame {
 
+    
+    SerialPort[] ports = null;
+    int openedPort = -1;
+    PacketListener listener = new PacketListener();
     /**
      * Creates new form mgds_v1
      */
     public mgds_v1() {
         initComponents();
+        createObjects();
     }
+    
+    private void createObjects(){
 
+    }
     /**
      * This method is called from within the constructor to initialize the form.
      * WARNING: Do NOT modify this code. The content of this method is always
@@ -43,6 +50,9 @@ public class mgds_v1 extends javax.swing.JFrame {
         jPanel3 = new javax.swing.JPanel();
         jScrollPane1 = new javax.swing.JScrollPane();
         jTextArea1 = new javax.swing.JTextArea();
+        jPanel4 = new javax.swing.JPanel();
+        openButton = new javax.swing.JButton();
+        closePortButton = new javax.swing.JButton();
 
         jFileChooser1.setFileFilter(new MyCustomFilter());
 
@@ -143,6 +153,42 @@ public class mgds_v1 extends javax.swing.JFrame {
                 .addContainerGap())
         );
 
+        jPanel4.setBorder(javax.swing.BorderFactory.createTitledBorder("COM Port Settings"));
+
+        openButton.setText("Open");
+        openButton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                openButtonActionPerformed(evt);
+            }
+        });
+
+        closePortButton.setText("Close Port");
+        closePortButton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                closePortButtonActionPerformed(evt);
+            }
+        });
+
+        javax.swing.GroupLayout jPanel4Layout = new javax.swing.GroupLayout(jPanel4);
+        jPanel4.setLayout(jPanel4Layout);
+        jPanel4Layout.setHorizontalGroup(
+            jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(jPanel4Layout.createSequentialGroup()
+                .addComponent(openButton)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(closePortButton)
+                .addGap(0, 0, Short.MAX_VALUE))
+        );
+        jPanel4Layout.setVerticalGroup(
+            jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel4Layout.createSequentialGroup()
+                .addContainerGap(66, Short.MAX_VALUE)
+                .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(openButton)
+                    .addComponent(closePortButton))
+                .addContainerGap())
+        );
+
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
         getContentPane().setLayout(layout);
         layout.setHorizontalGroup(
@@ -150,11 +196,13 @@ public class mgds_v1 extends javax.swing.JFrame {
             .addComponent(jPanel1, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
             .addComponent(jPanel3, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
             .addComponent(jPanel2, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+            .addComponent(jPanel4, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
-                .addContainerGap(81, Short.MAX_VALUE)
+                .addComponent(jPanel4, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
@@ -201,6 +249,50 @@ public class mgds_v1 extends javax.swing.JFrame {
         //jTextArea1.append("Hello2\n");
     }//GEN-LAST:event_updateButtonActionPerformed
 
+    private void openButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_openButtonActionPerformed
+        // TODO add your handling code here:
+        ports = SerialPort.getCommPorts();
+        
+        jTextArea1.append(String.format("Number of ports detedted: %d COM ports.\n", ports.length));
+        for(int k = 0; k < ports.length; k++){
+            jTextArea1.append(String.format("%s\n", ports[k].getDescriptivePortName()));
+        }
+        jTextArea1.append("System given ports names:\n");
+        for(int k = 0; k < ports.length; k++){
+            jTextArea1.append(String.format("%s\n", ports[k].getSystemPortName()));
+            if(ports[k].getSystemPortName().equals("COM11")){
+                jTextArea1.append(String.format("COM11 found\nOpening port %d\n", k));
+                if(ports[k].openPort()){
+                    openedPort = k;
+                    jTextArea1.append(String.format("Port %d opened successfully\n",openedPort));
+                    ports[openedPort].addDataListener(listener);
+                    
+                }else{
+                    jTextArea1.append("Can not open the port\n");
+                }
+            }
+        }
+        
+        
+    }//GEN-LAST:event_openButtonActionPerformed
+
+    private void closePortButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_closePortButtonActionPerformed
+        // TODO add your handling code here:
+        if(openedPort > 0){
+            jTextArea1.append(String.format("openedPort = %d\n", openedPort));
+            jTextArea1.append(String.format("ports.length = %d\n", ports.length));
+            ports[openedPort].removeDataListener();
+                if(ports[openedPort].closePort()){
+                    //System.out.println("Port closed.");
+                    jTextArea1.append(String.format("Port %d closed successfully\n", openedPort));
+                }else{
+                    System.out.println("Can not close the port.");
+                }
+            }else{
+                System.out.println("No COM port was opened.");
+            }
+    }//GEN-LAST:event_closePortButtonActionPerformed
+
     /**
      * @param args the command line arguments
      */
@@ -237,14 +329,17 @@ public class mgds_v1 extends javax.swing.JFrame {
     }
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
+    private javax.swing.JButton closePortButton;
     private javax.swing.JButton eraseButton;
     private javax.swing.JButton fileButton;
     private javax.swing.JFileChooser jFileChooser1;
     private javax.swing.JPanel jPanel1;
     private javax.swing.JPanel jPanel2;
     private javax.swing.JPanel jPanel3;
+    private javax.swing.JPanel jPanel4;
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JTextArea jTextArea1;
+    private javax.swing.JButton openButton;
     private javax.swing.JButton readButton;
     private javax.swing.JButton saveToButton;
     private javax.swing.JButton updateButton;
@@ -263,5 +358,43 @@ public class mgds_v1 extends javax.swing.JFrame {
             // hard-coded = ugly, should be done via I18N
             return "Text documents (*.txt)";
         }
+    }
+    
+    private final class PacketListener implements SerialPortPacketListener
+    {
+       @Override
+       public int getListeningEvents() { return SerialPort.LISTENING_EVENT_DATA_RECEIVED; }
+
+       @Override
+       public int getPacketSize() { return 12; }
+
+       @Override
+       public void serialEvent(SerialPortEvent event)
+       {
+          byte[] newData = event.getReceivedData();
+          jTextArea1.append(String.format("Received data of size: " + newData.length + "\n"));
+          //jTextArea1.append(String.format("Data: %s",newData.toString()));
+          for (int i = 0; i < newData.length; ++i)
+              jTextArea1.append(String.format("%s",(char)newData[i]));
+          //   System.out.print((char)newData[i]);
+          //System.out.println("\n");
+       }
     }    
+    /*
+    class myExitActions {
+        
+        public myExitActions(mgds_v1 frame){
+            if(openedPort > 0){
+                if(frame.ports[openedPort].closePort()){
+                    System.out.println("Port closed.");
+                    //jTextArea1.append("Port closed successfully\n");
+                }else{
+                    System.out.println("Can not close the port.");
+                }
+            }else{
+                System.out.println("No COM port was opened.");
+            }
+        }
+    }
+    */
 }
