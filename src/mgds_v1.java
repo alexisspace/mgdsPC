@@ -1,5 +1,5 @@
 
-import java.io.File;
+import java.io.*;
 import javax.swing.JFileChooser;
 import com.fazecast.jSerialComm.*;
 
@@ -8,17 +8,56 @@ import com.fazecast.jSerialComm.*;
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-
 /**
  *
  * @author alexis
  */
 public class mgds_v1 extends javax.swing.JFrame {
 
-    
+    // Constants
+    static final int FWLOAD_OK = 0x00;
+    static final int FWLOAD_FAILED = 0x01;
+    static final int FWLOAD_ERROR_INSUFFICIENT_DATA = 0x02;
+    static final int FWLOAD_ERROR_CSUM = 0x03;
+    static final int FWLOAD_ERROR_PKT_TIMEOUT = 0x04;
+    static final int FWLOAD_ERROR_NO_USB = 0x05;
+
+    static final int FWLOAD_ERROR_IN_FWCSUM = 0x10;
+
+    static final int FWLOAD_PACKET_TYPE_FWINFO = 0x35;
+    static final int FWLOAD_PACKET_TYPE_FWDATA = 0x46;
+    static final int FWLOAD_PACKET_DOWNLOAD_LOG_INFO_REQ = 0x5C;
+    static final int FWLOAD_PACKET_DOWNLOAD_LOG_INFO_RESP = 0x5D;
+    static final int FWLOAD_PACKET_DOWNLOAD_LOG = 0x5E;
+    static final int FWLOAD_PACKET_DOWNLOAD_LOG_ACK = 0x5F;
+    static final int FWLOAD_PACKET_SET_RTC = 0x67;
+    static final int FWLOAD_PACKET_ERASE_LOGS = 0x82;
+    static final int FWLOAD_PACKET_GET_DEVID = 0x95;
+    static final int FWLOAD_PACKET_READ_DEVID = 0x96;
+    static final int FWLOAD_PACKET_SET_DEVID = 0x97;
+
+    static final int FWLOAD_PACKET_TYPE_ACK = 0xE5;
+
+    static final int FWLOAD_PKT_TYPE_IDX = 2;
+    static final int FWLOAD_PKT_FW_PKT_CNT_IDX = 3;
+    static final int FWLOAD_PKT_FW_PAYLOAD_SIZE_IDX = 5;
+    static final int FWLOAD_PKT_FW_PAYLOAD_IDX = 6;
+
+    static final int FWLOAD_ACK_PKT_SIZE = 7;
+
+    static final int FWLOAD_PKT_SIZE = 64;
+    static final int FWLOAD_PKT_SIGN_B0 = 0xA5;
+    static final int FWLOAD_PKT_SIGN_B1 = 0x5A;
+
     SerialPort[] ports = null;
     int openedPort = -1;
     PacketListener listener = new PacketListener();
+    byte[] procBuffer = new byte[FWLOAD_PKT_SIZE];
+    byte[] outBuffer = new byte[FWLOAD_PKT_SIZE];
+    boolean newPacket = false;
+    long totalLogs = 0;
+    long logReq = 0;
+
     /**
      * Creates new form mgds_v1
      */
@@ -26,10 +65,11 @@ public class mgds_v1 extends javax.swing.JFrame {
         initComponents();
         createObjects();
     }
-    
-    private void createObjects(){
+
+    private void createObjects() {
 
     }
+
     /**
      * This method is called from within the constructor to initialize the form.
      * WARNING: Do NOT modify this code. The content of this method is always
@@ -61,6 +101,11 @@ public class mgds_v1 extends javax.swing.JFrame {
         jPanel1.setBorder(javax.swing.BorderFactory.createTitledBorder("Logger Data"));
 
         readButton.setText("Read");
+        readButton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                readButtonActionPerformed(evt);
+            }
+        });
 
         saveToButton.setText("Save To");
         saveToButton.addActionListener(new java.awt.event.ActionListener() {
@@ -70,6 +115,11 @@ public class mgds_v1 extends javax.swing.JFrame {
         });
 
         eraseButton.setText("Erase");
+        eraseButton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                eraseButtonActionPerformed(evt);
+            }
+        });
 
         javax.swing.GroupLayout jPanel1Layout = new javax.swing.GroupLayout(jPanel1);
         jPanel1.setLayout(jPanel1Layout);
@@ -216,7 +266,7 @@ public class mgds_v1 extends javax.swing.JFrame {
     private void saveToButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_saveToButtonActionPerformed
         // TODO add your handling code here:
         int returnVal = jFileChooser1.showSaveDialog(this);
-        if(returnVal == JFileChooser.APPROVE_OPTION){
+        if (returnVal == JFileChooser.APPROVE_OPTION) {
             File file = jFileChooser1.getSelectedFile();
             System.out.println("Saving to: " + file.getAbsolutePath());
         } else {
@@ -227,20 +277,20 @@ public class mgds_v1 extends javax.swing.JFrame {
     private void fileButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_fileButtonActionPerformed
         // TODO add your handling code here:
         int returnVal = jFileChooser1.showOpenDialog(this);
-            if (returnVal == JFileChooser.APPROVE_OPTION) {
-                File file = jFileChooser1.getSelectedFile();
-                System.out.println("Openning: " + file.getAbsolutePath());// + file.getName());
+        if (returnVal == JFileChooser.APPROVE_OPTION) {
+            File file = jFileChooser1.getSelectedFile();
+            System.out.println("Openning: " + file.getAbsolutePath());// + file.getName());
                 /*
-                try {
-                  // What to do with the file, e.g. display it in a TextArea
-                  textarea.read( new FileReader( file.getAbsolutePath() ), null );
-                } catch (IOException ex) {
-                  System.out.println("problem accessing file"+file.getAbsolutePath());
-                }
-                */
-            } else {
-                System.out.println("File access cancelled by user.");
-            }
+             try {
+             // What to do with the file, e.g. display it in a TextArea
+             textarea.read( new FileReader( file.getAbsolutePath() ), null );
+             } catch (IOException ex) {
+             System.out.println("problem accessing file"+file.getAbsolutePath());
+             }
+             */
+        } else {
+            System.out.println("File access cancelled by user.");
+        }
     }//GEN-LAST:event_fileButtonActionPerformed
 
     private void updateButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_updateButtonActionPerformed
@@ -252,46 +302,59 @@ public class mgds_v1 extends javax.swing.JFrame {
     private void openButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_openButtonActionPerformed
         // TODO add your handling code here:
         ports = SerialPort.getCommPorts();
-        
+
         jTextArea1.append(String.format("Number of ports detedted: %d COM ports.\n", ports.length));
-        for(int k = 0; k < ports.length; k++){
+        for (int k = 0; k < ports.length; k++) {
             jTextArea1.append(String.format("%s\n", ports[k].getDescriptivePortName()));
         }
         jTextArea1.append("System given ports names:\n");
-        for(int k = 0; k < ports.length; k++){
+        for (int k = 0; k < ports.length; k++) {
             jTextArea1.append(String.format("%s\n", ports[k].getSystemPortName()));
-            if(ports[k].getSystemPortName().equals("COM11")){
+            if (ports[k].getSystemPortName().equals("COM11")) {
                 jTextArea1.append(String.format("COM11 found\nOpening port %d\n", k));
-                if(ports[k].openPort()){
+                if (ports[k].openPort()) {
                     openedPort = k;
-                    jTextArea1.append(String.format("Port %d opened successfully\n",openedPort));
+                    jTextArea1.append(String.format("Port %d opened successfully\n", openedPort));
                     ports[openedPort].addDataListener(listener);
-                    
-                }else{
+
+                } else {
                     jTextArea1.append("Can not open the port\n");
                 }
             }
         }
-        
-        
+
+
     }//GEN-LAST:event_openButtonActionPerformed
 
     private void closePortButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_closePortButtonActionPerformed
         // TODO add your handling code here:
-        if(openedPort > 0){
+        if (openedPort > 0) {
             jTextArea1.append(String.format("openedPort = %d\n", openedPort));
             jTextArea1.append(String.format("ports.length = %d\n", ports.length));
             ports[openedPort].removeDataListener();
-                if(ports[openedPort].closePort()){
-                    //System.out.println("Port closed.");
-                    jTextArea1.append(String.format("Port %d closed successfully\n", openedPort));
-                }else{
-                    System.out.println("Can not close the port.");
-                }
-            }else{
-                System.out.println("No COM port was opened.");
+            if (ports[openedPort].closePort()) {
+                //System.out.println("Port closed.");
+                jTextArea1.append(String.format("Port %d closed successfully\n", openedPort));
+            } else {
+                System.out.println("Can not close the port.");
             }
+        } else {
+            System.out.println("No COM port was opened.");
+        }
     }//GEN-LAST:event_closePortButtonActionPerformed
+
+    private void eraseButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_eraseButtonActionPerformed
+        // TODO add your handling code here:
+        byte[] byteArray = new byte[2];
+
+        byteArray[0] = (byte) FWLOAD_PKT_SIGN_B0;
+        jTextArea1.append(String.format("Constant value: %x\n", byteArray[0]));
+    }//GEN-LAST:event_eraseButtonActionPerformed
+
+    private void readButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_readButtonActionPerformed
+        // TODO add your handling code here:
+        startLogging(outBuffer); // Send command to read log data
+    }//GEN-LAST:event_readButtonActionPerformed
 
     /**
      * @param args the command line arguments
@@ -324,6 +387,7 @@ public class mgds_v1 extends javax.swing.JFrame {
         java.awt.EventQueue.invokeLater(new Runnable() {
             public void run() {
                 new mgds_v1().setVisible(true);
+                //mgds_v1().this.jTextArea1.append("Hello");
             }
         });
     }
@@ -345,56 +409,164 @@ public class mgds_v1 extends javax.swing.JFrame {
     private javax.swing.JButton updateButton;
     // End of variables declaration//GEN-END:variables
 
-
     class MyCustomFilter extends javax.swing.filechooser.FileFilter {
+
         @Override
         public boolean accept(File file) {
             // Allow only directories, or files with ".txt" extension
-            return file.isDirectory() || file.getAbsolutePath().endsWith(".txt");
+            return file.isDirectory() || file.getAbsolutePath().endsWith(".csv");
         }
+
         @Override
         public String getDescription() {
             // This description will be displayed in the dialog,
             // hard-coded = ugly, should be done via I18N
-            return "Text documents (*.txt)";
+            return "CSV files (*.csv)";
+        }
+    }
+
+    private final class PacketListener implements SerialPortPacketListener {
+
+        @Override
+        public int getListeningEvents() {
+            return SerialPort.LISTENING_EVENT_DATA_RECEIVED;
+        }
+
+        @Override
+        public int getPacketSize() {
+            return FWLOAD_PKT_SIZE;
+        }
+
+        @Override
+        public void serialEvent(SerialPortEvent event) {
+            byte[] tempBuffer = event.getReceivedData();
+            processRawPacket(tempBuffer);
+
+            //   System.out.print((char)newData[i]);
+            //System.out.println("\n");
+        }
+    }
+
+    private void processRawPacket(byte[] data) {
+        int packetType = -1;
+
+        System.arraycopy(data, 0, procBuffer, 0, FWLOAD_PKT_SIZE);
+        newPacket = false;
+        packetType = procBuffer[2] & 0xFF;
+        if (!(chkCsumFWLOAD(procBuffer) == FWLOAD_OK)) {
+            // Invalid checksum, no process this packet
+            jTextArea1.append(String.format("Invalid checksum on packet type: %x\n", packetType));
+            return;
+        }
+        switch (packetType) {
+            case FWLOAD_PACKET_DOWNLOAD_LOG_INFO_RESP:
+
+                totalLogs = procBuffer[FWLOAD_PKT_TYPE_IDX + 5] & 0xFF;
+                totalLogs |= (procBuffer[FWLOAD_PKT_TYPE_IDX + 4] << 8) & 0x0000FFFF;
+                totalLogs |= (procBuffer[FWLOAD_PKT_TYPE_IDX + 3] << 16) & 0x00FFFFFF;
+                totalLogs |= (procBuffer[FWLOAD_PKT_TYPE_IDX + 2] << 24) & 0xFFFFFFFF;
+                logReq = 0;
+                // Send ack from current RESP and request FIRST log packet
+                sendLogReq(outBuffer, logReq);
+                break;
+
+            case FWLOAD_PACKET_DOWNLOAD_LOG:
+                // Convert and process log data packet
+                processLogPacket(procBuffer);
+                logReq++;
+                if (logReq <= totalLogs) {
+                    //sendLogReq(outBuffer, logReq);
+                    sendLogReq(outBuffer, logReq);
+                } else {
+                    // All logs have been read
+                    totalLogs = -1;
+                }
+                break;
+        }
+    }
+
+    //--------------------------------------------------------------------------
+    private void sendLogReq(byte[] buffer, long logNum) {
+
+        clrPktFWLOAD(buffer);
+        buffer[FWLOAD_PKT_TYPE_IDX] = (byte) FWLOAD_PACKET_DOWNLOAD_LOG_ACK;
+        // Add requested Log packet number
+        buffer[FWLOAD_PKT_TYPE_IDX + 1] = (byte) ((logNum >> 24) & 0xFF);
+        buffer[FWLOAD_PKT_TYPE_IDX + 2] = (byte) ((logNum >> 16) & 0xFF);
+        buffer[FWLOAD_PKT_TYPE_IDX + 3] = (byte) ((logNum >> 8) & 0xFF);
+        buffer[FWLOAD_PKT_TYPE_IDX + 4] = (byte) (logNum & 0xFF);
+        addCsumFWLOAD(buffer);
+        if (openedPort >= 0) {
+            if (ports[openedPort].isOpen()) {
+                ports[openedPort].writeBytes(buffer, FWLOAD_PKT_SIZE);
+            }else{
+                jTextArea1.append(String.format("Not opened Port"));
+            }
+        }else{
+            jTextArea1.append(String.format("Not valid Port"));
         }
     }
     
-    private final class PacketListener implements SerialPortPacketListener
-    {
-       @Override
-       public int getListeningEvents() { return SerialPort.LISTENING_EVENT_DATA_RECEIVED; }
-
-       @Override
-       public int getPacketSize() { return 12; }
-
-       @Override
-       public void serialEvent(SerialPortEvent event)
-       {
-          byte[] newData = event.getReceivedData();
-          jTextArea1.append(String.format("Received data of size: " + newData.length + "\n"));
-          //jTextArea1.append(String.format("Data: %s",newData.toString()));
-          for (int i = 0; i < newData.length; ++i)
-              jTextArea1.append(String.format("%s",(char)newData[i]));
-          //   System.out.print((char)newData[i]);
-          //System.out.println("\n");
-       }
-    }    
-    /*
-    class myExitActions {
-        
-        public myExitActions(mgds_v1 frame){
-            if(openedPort > 0){
-                if(frame.ports[openedPort].closePort()){
-                    System.out.println("Port closed.");
-                    //jTextArea1.append("Port closed successfully\n");
-                }else{
-                    System.out.println("Can not close the port.");
-                }
+    //--------------------------------------------------------------------------
+    private void startLogging(byte[] buffer){
+        clrPktFWLOAD(buffer);
+        buffer[FWLOAD_PKT_TYPE_IDX] = (byte) FWLOAD_PACKET_DOWNLOAD_LOG_INFO_REQ;
+        addCsumFWLOAD(buffer);
+        if (openedPort >= 0) {
+            if (ports[openedPort].isOpen()) {
+                ports[openedPort].writeBytes(buffer, FWLOAD_PKT_SIZE);
             }else{
-                System.out.println("No COM port was opened.");
+                jTextArea1.append(String.format("Not opened Port"));
             }
+        }else{
+            jTextArea1.append(String.format("Not valid Port"));
+        }        
+    }
+
+    //--------------------------------------------------------------------------
+    private void processLogPacket(byte[] buffer) {
+
+    }
+
+    //--------------------------------------------------------------------------
+    void clrPktFWLOAD(byte[] pkt_data) {
+        int k;
+        for (k = 0; k < (FWLOAD_PKT_SIZE); k++) {
+            pkt_data[k] = 0x00;
+        }
+        // add packet sign - preambule
+        pkt_data[0] = (byte) FWLOAD_PKT_SIGN_B0;
+        pkt_data[1] = (byte) FWLOAD_PKT_SIGN_B1;
+    }
+
+    //--------------------------------------------------------------------------
+    private int chkCsumFWLOAD(byte[] buff) {/// validate packet checksum 
+        int k;
+        byte[] csum = {0x00, 0x00};
+        byte flag = 0x00;
+
+        for (k = 0; k < ((FWLOAD_PKT_SIZE) - 2); k++) {
+            csum[flag] ^= buff[k];
+            flag ^= 0x01;
+        }
+
+        if ((csum[0] == buff[(FWLOAD_PKT_SIZE) - 2]) && (csum[1] == buff[(FWLOAD_PKT_SIZE) - 1])) {
+            return (FWLOAD_OK);
+        }
+
+        return (FWLOAD_ERROR_CSUM);
+    }
+
+    //--------------------------------------------------------------------------    
+    private void addCsumFWLOAD(byte[] pkt_data) {
+        int k;
+        pkt_data[(FWLOAD_PKT_SIZE) - 2] = 0x00;
+        pkt_data[(FWLOAD_PKT_SIZE) - 1] = 0x00;
+
+        for (k = 0; k < ((FWLOAD_PKT_SIZE) - 2); k += 2) {
+            pkt_data[(FWLOAD_PKT_SIZE) - 2] ^= pkt_data[k];
+            pkt_data[(FWLOAD_PKT_SIZE) - 1] ^= pkt_data[k + 1];
         }
     }
-    */
+
 }
