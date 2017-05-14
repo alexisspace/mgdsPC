@@ -2,6 +2,12 @@
 import java.io.*;
 import javax.swing.JFileChooser;
 import com.fazecast.jSerialComm.*;
+import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
+import javax.swing.JComboBox;
 
 /*
  * To change this license header, choose License Headers in Project Properties.
@@ -15,6 +21,7 @@ import com.fazecast.jSerialComm.*;
 public class mgds_v1 extends javax.swing.JFrame {
 
     // Constants
+    static final int LOGGER_RECORD_SIZE = 47;
     static final int FWLOAD_OK = 0x00;
     static final int FWLOAD_FAILED = 0x01;
     static final int FWLOAD_ERROR_INSUFFICIENT_DATA = 0x02;
@@ -49,12 +56,36 @@ public class mgds_v1 extends javax.swing.JFrame {
     static final int FWLOAD_PKT_SIGN_B0 = 0xA5;
     static final int FWLOAD_PKT_SIGN_B1 = 0x5A;
 
+    // My definitions
+    static final int RTC_STRING_LENGTH = 20;
+    static final int FWLOAD_PKT_LOG_PKT_NUM_IDX = 4;
+    static final int FWLOAD_PKT_LOG_PAYLOAD_IDX = 8;
+    static final int FWLOAD_PKT_LOG_BATTERY_IDX = FWLOAD_PKT_LOG_PAYLOAD_IDX + 20;
+    static final int FWLOAD_PKT_LOG_ERROR_IDX   = FWLOAD_PKT_LOG_BATTERY_IDX + 1;
+    static final int FWLOAD_PKT_LOG_SENSORS_IDX = FWLOAD_PKT_LOG_ERROR_IDX + 4;
+    static final int FWLOAD_PKT_LOG_PRESSURE_IDX = FWLOAD_PKT_LOG_SENSORS_IDX + 18;
+    static final int FWLOAD_PKT_LOG_TEMPERATURE_IDX = FWLOAD_PKT_LOG_PRESSURE_IDX + 2;
+    
+    
+    MyOpenFilter openFileFilter = new MyOpenFilter();
+    MySaveFilter saveFileFilter = new MySaveFilter();
     SerialPort[] ports = null;
+    File recordFile = null;
+    File programFile = null;
+    PrintWriter outputStream = null;
+    Path tempPath = null;
+    PrintWriter outputStream2 = null;
+    Path tempPath2 = null;
+    String selectedPortName = null;
+    String recordFormat = "%s,%d,0x%x,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d%f\n";
     int openedPort = -1;
+    int selectedPortIndex = -1;
+    int logPacketErrorCounter = 0;
     PacketListener listener = new PacketListener();
     byte[] procBuffer = new byte[FWLOAD_PKT_SIZE];
     byte[] outBuffer = new byte[FWLOAD_PKT_SIZE];
     boolean newPacket = false;
+    boolean logAvailable = false;
     long totalLogs = 0;
     long logReq = 0;
 
@@ -93,14 +124,15 @@ public class mgds_v1 extends javax.swing.JFrame {
         jPanel4 = new javax.swing.JPanel();
         openButton = new javax.swing.JButton();
         closePortButton = new javax.swing.JButton();
-
-        jFileChooser1.setFileFilter(new MyCustomFilter());
+        portsComboBox = new javax.swing.JComboBox();
+        detectButton = new javax.swing.JButton();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
 
         jPanel1.setBorder(javax.swing.BorderFactory.createTitledBorder("Logger Data"));
 
         readButton.setText("Read");
+        readButton.setEnabled(false);
         readButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 readButtonActionPerformed(evt);
@@ -108,6 +140,7 @@ public class mgds_v1 extends javax.swing.JFrame {
         });
 
         saveToButton.setText("Save To");
+        saveToButton.setEnabled(false);
         saveToButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 saveToButtonActionPerformed(evt);
@@ -115,6 +148,7 @@ public class mgds_v1 extends javax.swing.JFrame {
         });
 
         eraseButton.setText("Erase");
+        eraseButton.setEnabled(false);
         eraseButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 eraseButtonActionPerformed(evt);
@@ -147,6 +181,7 @@ public class mgds_v1 extends javax.swing.JFrame {
         jPanel2.setBorder(javax.swing.BorderFactory.createTitledBorder("MCU Firmware"));
 
         fileButton.setText("File");
+        fileButton.setEnabled(false);
         fileButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 fileButtonActionPerformed(evt);
@@ -154,6 +189,7 @@ public class mgds_v1 extends javax.swing.JFrame {
         });
 
         updateButton.setText("Update");
+        updateButton.setEnabled(false);
         updateButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 updateButtonActionPerformed(evt);
@@ -206,6 +242,7 @@ public class mgds_v1 extends javax.swing.JFrame {
         jPanel4.setBorder(javax.swing.BorderFactory.createTitledBorder("COM Port Settings"));
 
         openButton.setText("Open");
+        openButton.setEnabled(false);
         openButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 openButtonActionPerformed(evt);
@@ -213,9 +250,23 @@ public class mgds_v1 extends javax.swing.JFrame {
         });
 
         closePortButton.setText("Close Port");
+        closePortButton.setEnabled(false);
         closePortButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 closePortButtonActionPerformed(evt);
+            }
+        });
+
+        portsComboBox.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                portsComboBoxActionPerformed(evt);
+            }
+        });
+
+        detectButton.setText("Detect");
+        detectButton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                detectButtonActionPerformed(evt);
             }
         });
 
@@ -224,19 +275,28 @@ public class mgds_v1 extends javax.swing.JFrame {
         jPanel4Layout.setHorizontalGroup(
             jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel4Layout.createSequentialGroup()
-                .addComponent(openButton)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(closePortButton)
-                .addGap(0, 0, Short.MAX_VALUE))
+                .addGap(4, 4, 4)
+                .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addComponent(detectButton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(openButton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addGap(18, 18, 18)
+                .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addComponent(closePortButton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(portsComboBox, 0, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
         jPanel4Layout.setVerticalGroup(
             jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel4Layout.createSequentialGroup()
-                .addContainerGap(66, Short.MAX_VALUE)
+                .addContainerGap()
+                .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(detectButton)
+                    .addComponent(portsComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
                 .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(openButton)
                     .addComponent(closePortButton))
-                .addContainerGap())
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
@@ -252,12 +312,13 @@ public class mgds_v1 extends javax.swing.JFrame {
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
                 .addComponent(jPanel4, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
                 .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(jPanel3, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addComponent(jPanel3, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(20, Short.MAX_VALUE))
         );
 
         pack();
@@ -265,10 +326,20 @@ public class mgds_v1 extends javax.swing.JFrame {
 
     private void saveToButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_saveToButtonActionPerformed
         // TODO add your handling code here:
+        jFileChooser1.setFileFilter(saveFileFilter);
         int returnVal = jFileChooser1.showSaveDialog(this);
         if (returnVal == JFileChooser.APPROVE_OPTION) {
-            File file = jFileChooser1.getSelectedFile();
-            System.out.println("Saving to: " + file.getAbsolutePath());
+            recordFile = jFileChooser1.getSelectedFile();
+            if(logAvailable){
+                // Copy temp log file to location selected by user
+                try {
+                    Files.copy(tempPath.toAbsolutePath(), Paths.get(recordFile.getAbsolutePath()), REPLACE_EXISTING);
+                    System.out.println("Saving to: " + recordFile.getAbsolutePath());
+                } catch (IOException error) {
+                    jTextArea1.append(String.format("%s\n", error));
+                }
+            }
+            
         } else {
             System.out.println("File access cancelled by user.");
         }
@@ -276,10 +347,11 @@ public class mgds_v1 extends javax.swing.JFrame {
 
     private void fileButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_fileButtonActionPerformed
         // TODO add your handling code here:
+        jFileChooser1.setFileFilter(openFileFilter);
         int returnVal = jFileChooser1.showOpenDialog(this);
         if (returnVal == JFileChooser.APPROVE_OPTION) {
-            File file = jFileChooser1.getSelectedFile();
-            System.out.println("Openning: " + file.getAbsolutePath());// + file.getName());
+            programFile = jFileChooser1.getSelectedFile();
+            System.out.println("Openning: " + programFile.getAbsolutePath());// + file.getName());
                 /*
              try {
              // What to do with the file, e.g. display it in a TextArea
@@ -301,29 +373,28 @@ public class mgds_v1 extends javax.swing.JFrame {
 
     private void openButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_openButtonActionPerformed
         // TODO add your handling code here:
-        ports = SerialPort.getCommPorts();
-
-        jTextArea1.append(String.format("Number of ports detedted: %d COM ports.\n", ports.length));
-        for (int k = 0; k < ports.length; k++) {
-            jTextArea1.append(String.format("%s\n", ports[k].getDescriptivePortName()));
-        }
-        jTextArea1.append("System given ports names:\n");
-        for (int k = 0; k < ports.length; k++) {
-            jTextArea1.append(String.format("%s\n", ports[k].getSystemPortName()));
-            if (ports[k].getSystemPortName().equals("COM11")) {
-                jTextArea1.append(String.format("COM11 found\nOpening port %d\n", k));
-                if (ports[k].openPort()) {
-                    openedPort = k;
-                    jTextArea1.append(String.format("Port %d opened successfully\n", openedPort));
-                    ports[openedPort].addDataListener(listener);
-
-                } else {
-                    jTextArea1.append("Can not open the port\n");
-                }
+        if(selectedPortIndex >= 0){
+            if (ports[selectedPortIndex].openPort()) {
+                openedPort = selectedPortIndex;
+                jTextArea1.append(String.format("Port %d opened successfully\n", openedPort));
+                ports[openedPort].addDataListener(listener);
+                
+                // Enable some buttons
+                closePortButton.setEnabled(true);
+                
+                fileButton.setEnabled(true);
+                updateButton.setEnabled(true);
+                readButton.setEnabled(true);
+                eraseButton.setEnabled(true);
+                
+                // Disable
+                detectButton.setEnabled(false);
+                openButton.setEnabled(false);
+                
+            } else {
+                jTextArea1.append("Can not open the port\n");
             }
         }
-
-
     }//GEN-LAST:event_openButtonActionPerformed
 
     private void closePortButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_closePortButtonActionPerformed
@@ -335,6 +406,20 @@ public class mgds_v1 extends javax.swing.JFrame {
             if (ports[openedPort].closePort()) {
                 //System.out.println("Port closed.");
                 jTextArea1.append(String.format("Port %d closed successfully\n", openedPort));
+                openedPort = -1;
+                
+                // Disable relevant buttons
+                readButton.setEnabled(false);
+                saveToButton.setEnabled(false);
+                updateButton.setEnabled(false);
+                eraseButton.setEnabled(false);
+                fileButton.setEnabled(false);
+                closePortButton.setEnabled(false);
+                
+                // Enable Open button
+                //openButton.setEnabled(true);
+                detectButton.setEnabled(true);
+                
             } else {
                 System.out.println("Can not close the port.");
             }
@@ -346,15 +431,52 @@ public class mgds_v1 extends javax.swing.JFrame {
     private void eraseButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_eraseButtonActionPerformed
         // TODO add your handling code here:
         byte[] byteArray = new byte[2];
-
+        int myInt = 0;
+        
         byteArray[0] = (byte) FWLOAD_PKT_SIGN_B0;
-        jTextArea1.append(String.format("Constant value: %x\n", byteArray[0]));
+        byteArray[1] = 0x00;
+        
+        myInt = byteArray[1] & 0xFF;
+        myInt |= ((byteArray[0] << 8) & 0xFFFF);
+        jTextArea1.append(String.format("Constant value, hex =  %x; dec = %d\n", myInt, myInt));
+        Path tempPath = Paths.get("tempLogRecord.txt");
+        jTextArea1.append(tempPath.toAbsolutePath().toString());
+        //readButton.setEnabled(true);
+                
     }//GEN-LAST:event_eraseButtonActionPerformed
 
     private void readButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_readButtonActionPerformed
         // TODO add your handling code here:
         startLogging(outBuffer); // Send command to read log data
     }//GEN-LAST:event_readButtonActionPerformed
+
+    private void detectButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_detectButtonActionPerformed
+        // TODO add your handling code here:
+        ports = SerialPort.getCommPorts();
+        jTextArea1.append(String.format("Number of ports detedted: %d COM ports.\n", ports.length));
+        portsComboBox.removeAllItems();
+        if(ports.length > 0){
+            for (int k = 0; k < ports.length; k++) {
+                portsComboBox.addItem(ports[k].getSystemPortName());
+                jTextArea1.append(String.format("%s\n", ports[k].getDescriptivePortName()));
+            }
+            openButton.setEnabled(true);
+        }
+    }//GEN-LAST:event_detectButtonActionPerformed
+
+    private void portsComboBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_portsComboBoxActionPerformed
+        // TODO add your handling code here:
+        JComboBox cb = (JComboBox)evt.getSource();
+        selectedPortName = (String)cb.getSelectedItem();
+        //jTextArea1.append(String.format("Selected Port is: %s\n", selectedPortName));
+        for (int k = 0; k < ports.length; k++) {
+            // Search port index corresponding to port name selected
+            if (ports[k].getSystemPortName().equals(selectedPortName)) {
+                selectedPortIndex = k;
+                //jTextArea1.append(String.format("Index found %d\n", k));
+            }
+        }
+    }//GEN-LAST:event_portsComboBoxActionPerformed
 
     /**
      * @param args the command line arguments
@@ -394,6 +516,7 @@ public class mgds_v1 extends javax.swing.JFrame {
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JButton closePortButton;
+    private javax.swing.JButton detectButton;
     private javax.swing.JButton eraseButton;
     private javax.swing.JButton fileButton;
     private javax.swing.JFileChooser jFileChooser1;
@@ -404,12 +527,13 @@ public class mgds_v1 extends javax.swing.JFrame {
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JTextArea jTextArea1;
     private javax.swing.JButton openButton;
+    private javax.swing.JComboBox portsComboBox;
     private javax.swing.JButton readButton;
     private javax.swing.JButton saveToButton;
     private javax.swing.JButton updateButton;
     // End of variables declaration//GEN-END:variables
 
-    class MyCustomFilter extends javax.swing.filechooser.FileFilter {
+    class MySaveFilter extends javax.swing.filechooser.FileFilter {
 
         @Override
         public boolean accept(File file) {
@@ -422,6 +546,22 @@ public class mgds_v1 extends javax.swing.JFrame {
             // This description will be displayed in the dialog,
             // hard-coded = ugly, should be done via I18N
             return "CSV files (*.csv)";
+        }
+    }
+    
+        class MyOpenFilter extends javax.swing.filechooser.FileFilter {
+
+        @Override
+        public boolean accept(File file) {
+            // Allow only directories, or files with ".txt" extension
+            return file.getAbsolutePath().endsWith(".bin");
+        }
+
+        @Override
+        public String getDescription() {
+            // This description will be displayed in the dialog,
+            // hard-coded = ugly, should be done via I18N
+            return "Binary file (*.bin)";
         }
     }
 
@@ -449,6 +589,7 @@ public class mgds_v1 extends javax.swing.JFrame {
 
     private void processRawPacket(byte[] data) {
         int packetType = -1;
+        long packetReceived = -1;
 
         System.arraycopy(data, 0, procBuffer, 0, FWLOAD_PKT_SIZE);
         newPacket = false;
@@ -465,6 +606,7 @@ public class mgds_v1 extends javax.swing.JFrame {
                 totalLogs |= (procBuffer[FWLOAD_PKT_TYPE_IDX + 4] << 8) & 0x0000FFFF;
                 totalLogs |= (procBuffer[FWLOAD_PKT_TYPE_IDX + 3] << 16) & 0x00FFFFFF;
                 totalLogs |= (procBuffer[FWLOAD_PKT_TYPE_IDX + 2] << 24) & 0xFFFFFFFF;
+                jTextArea1.append(String.format("Total logs in device: %d\n", totalLogs));
                 logReq = 0;
                 // Send ack from current RESP and request FIRST log packet
                 sendLogReq(outBuffer, logReq);
@@ -472,14 +614,19 @@ public class mgds_v1 extends javax.swing.JFrame {
 
             case FWLOAD_PACKET_DOWNLOAD_LOG:
                 // Convert and process log data packet
-                processLogPacket(procBuffer);
-                logReq++;
+                packetReceived = processLogPacket(procBuffer);
+                if(packetReceived == logReq){        
+                    logReq++;
+                }else{
+                    logPacketErrorCounter++;
+                }
                 if (logReq <= totalLogs) {
                     //sendLogReq(outBuffer, logReq);
                     sendLogReq(outBuffer, logReq);
                 } else {
                     // All logs have been read
                     totalLogs = -1;
+                    
                 }
                 break;
         }
@@ -524,8 +671,88 @@ public class mgds_v1 extends javax.swing.JFrame {
     }
 
     //--------------------------------------------------------------------------
-    private void processLogPacket(byte[] buffer) {
-
+    private long processLogPacket(byte[] buffer) {
+        
+        // TODO: Add wrong packet arrived error handling
+        byte[] rtcBytes = new byte[RTC_STRING_LENGTH];
+        int batteryLevel = 0;
+        int [] sensors = new int[9];
+        int pressure = 0;
+        int temperature = 0;
+        double temperatureDouble = 0;
+        int j,k;
+        long packetLogNumber = -1;
+        long errorCode = 0;
+     
+        System.arraycopy(buffer, FWLOAD_PKT_LOG_PAYLOAD_IDX, rtcBytes, 0, RTC_STRING_LENGTH);
+        Charset charset = Charset.forName("US-ASCII");
+        //try{
+            String rtcString = new String(rtcBytes, charset);
+        //}catch(UnsupportedEncodingException error){
+        //   jTextArea1.append(String.format("%s\n", error));
+        //}
+        
+        packetLogNumber = buffer[FWLOAD_PKT_LOG_PKT_NUM_IDX + 3]           & 0xFF;
+        packetLogNumber |= (buffer[FWLOAD_PKT_LOG_PKT_NUM_IDX + 2] << 8)   & 0xFFFF;
+        packetLogNumber |= (buffer[FWLOAD_PKT_LOG_PKT_NUM_IDX + 1] << 16)  & 0xFFFFFF;
+        packetLogNumber |= (buffer[FWLOAD_PKT_LOG_PKT_NUM_IDX] << 24)      & 0xFFFFFFFF;
+        
+        batteryLevel = buffer[FWLOAD_PKT_LOG_BATTERY_IDX] & 0xFF;
+        
+        errorCode = buffer[FWLOAD_PKT_LOG_ERROR_IDX + 3]                    & 0xFF;
+        errorCode |= (buffer[FWLOAD_PKT_LOG_ERROR_IDX + 2] << 8)            & 0xFFFF;
+        errorCode |= (buffer[FWLOAD_PKT_LOG_ERROR_IDX + 1] << 16)           & 0xFFFFFF;
+        errorCode |= (buffer[FWLOAD_PKT_LOG_ERROR_IDX] << 24)               & 0xFFFFFFFF;
+        
+        for (k = FWLOAD_PKT_LOG_SENSORS_IDX, j = 0; k < FWLOAD_PKT_LOG_PRESSURE_IDX; k = k + 2, j++){
+            sensors[j] = (buffer[k+1]) & 0xFF;
+            sensors[j] |= (buffer[k] << 8) & 0xFFFF;
+        }
+        
+        pressure = buffer[FWLOAD_PKT_LOG_PRESSURE_IDX+1] & 0xFF;
+        pressure |= (buffer[FWLOAD_PKT_LOG_PRESSURE_IDX] << 8 ) & 0xFFFF;
+        
+        temperature = buffer[FWLOAD_PKT_LOG_TEMPERATURE_IDX+1] & 0xFF;
+        temperature |= (buffer[FWLOAD_PKT_LOG_TEMPERATURE_IDX] << 8) & 0xFFFF;
+        
+        temperatureDouble = temperature*0.1;
+        // Write to CSV file
+        if(packetLogNumber == 0){
+            // Create a temporary file
+            
+            try{
+                tempPath = Paths.get("tempLogRecord.txt");
+                outputStream = new PrintWriter(Files.newBufferedWriter(tempPath, charset));
+                
+                tempPath2 = Paths.get("tempLogRecord2.txt");
+                outputStream2 = new PrintWriter(Files.newBufferedWriter(tempPath2, charset));
+                //BufferedWriter writer = Files.newBufferedWriter(tempPath, charset);
+                //outputStream = new PrintWriter(new FileWriter("tempLogRecord.txt"));
+                // Write headers
+                
+            }catch(IOException error){
+                jTextArea1.append(String.format("%s\n", error));
+            }
+        }
+        
+        outputStream.format(recordFormat,rtcString, batteryLevel, errorCode, sensors[0],
+        sensors[1], sensors[2], sensors[3], sensors[4], sensors[5], sensors[6],
+        sensors[7], sensors[8], pressure, temperatureDouble);
+        
+/*        
+        finally{
+            if (outputStream != null) {
+                outputStream.close();
+            }            
+        }
+*/
+        if(packetLogNumber == totalLogs){
+            // Close File and mark that a new log is available for save to disk
+            logAvailable = true;
+            outputStream.close();
+            saveToButton.setEnabled(true);
+        }
+        return packetLogNumber;
     }
 
     //--------------------------------------------------------------------------
@@ -568,5 +795,4 @@ public class mgds_v1 extends javax.swing.JFrame {
             pkt_data[(FWLOAD_PKT_SIZE) - 1] ^= pkt_data[k + 1];
         }
     }
-
 }
